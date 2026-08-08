@@ -1,0 +1,7 @@
+name = "jarvis-hud-proxy"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+# I secret (GROQ_API_KEY, ALLOWED_ORIGIN) NON vanno mai messi qui:
+# si impostano dalla dashboard Cloudflare o con:
+#   wrangler secret put GROQ_API_KEY

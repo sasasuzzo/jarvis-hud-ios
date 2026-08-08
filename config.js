@@ -5,7 +5,7 @@
 const CONFIG = {
   // Sostituisci con l'URL del tuo Worker, es:
   // "https://jarvis-hud-proxy.tuoaccount.workers.dev"
-  WORKER_URL: "https://jarvis-hud-proxy.YOUR-SUBDOMAIN.workers.dev",
+  WORKER_URL: "https://jarvis-hud-ios.salvatorecaciopppo4000.workers.dev/",
 
   GROQ_VISION_MODEL: "llama-3.2-11b-vision-preview",
   GROQ_TEXT_MODEL: "llama-3.3-70b-versatile",

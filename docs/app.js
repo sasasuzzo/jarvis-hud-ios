@@ -21,6 +21,7 @@ let currentStream = null;
 document.getElementById("btn-boot-start").addEventListener("click", bootSequence);
 
 async function bootSequence() {
+  unlockSpeech();
   setBootStatus("Richiesta accesso alla fotocamera...");
   try {
     await startCamera();
@@ -65,12 +66,15 @@ async function startCamera() {
 
 function captureFrameAsDataUrl() {
   const video = document.getElementById("camera-feed");
+  if (!video.videoWidth || !video.videoHeight) {
+    throw new Error("Fotocamera non ancora pronta, riprova tra un istante.");
+  }
   const canvas = document.getElementById("capture-canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   const ctx = canvas.getContext("2d");
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.85);
+  return canvas.toDataURL("image/jpeg", 0.8);
 }
 
 // ---------- Orologio ----------
@@ -353,9 +357,15 @@ function stopListeningUI() {
 }
 
 document.getElementById("btn-talk").addEventListener("click", () => {
+  unlockSpeech();
   if (compareState.waiting) {
-    const secondImage = captureFrameAsDataUrl();
-    processComparison(secondImage);
+    try {
+      const secondImage = captureFrameAsDataUrl();
+      processComparison(secondImage);
+    } catch (err) {
+      setResponseBox(err.message);
+      terminalLog("Errore cattura frame: " + err.message);
+    }
     return;
   }
   if (!recognition) return;
@@ -400,7 +410,14 @@ async function handleVoiceCommand(testo) {
   document.getElementById("reticle-target-label").textContent = "";
 
   const intent = classifyIntent(testo);
-  const frameDataUrl = captureFrameAsDataUrl();
+  let frameDataUrl;
+  try {
+    frameDataUrl = captureFrameAsDataUrl();
+  } catch (err) {
+    setResponseBox(err.message);
+    terminalLog("Errore cattura frame: " + err.message);
+    return;
+  }
 
   if (intent === "confronto") {
     compareState.waiting = true;
@@ -531,7 +548,7 @@ async function handleMemoryQuery(testo) {
 
 async function handleSchedaCompleta(frameDataUrl) {
   const promptJson = `Sei Jarvis. Analizza l'oggetto principale nell'immagine e rispondi SOLO con un oggetto JSON valido (nessun testo fuori dal JSON), con queste chiavi in italiano: nome, categoria, marca_modello, anno_stimato, materiali, dimensioni_stimate, prezzo_medio_stimato, come_funziona, curiosita, descrizione. Se un'informazione non e' determinabile con certezza dall'immagine, scrivi "non determinabile".`;
-  const raw = await askJarvisVision(promptJson, [frameDataUrl]);
+  const raw = await askJarvisVision(promptJson, [frameDataUrl], true);
   const dati = parseJsonLoose(raw);
 
   if (!dati) {
@@ -563,7 +580,7 @@ async function handleSchedaCompleta(frameDataUrl) {
 
 async function handleGuardaDentro(frameDataUrl) {
   const promptJson = `Sei Jarvis. Immagina di dover spiegare i componenti interni visibili o probabili di questo oggetto, come in una vista esplosa. Rispondi SOLO con un oggetto JSON valido con chiave "componenti", che e' una lista di oggetti ciascuno con "nome" e "funzione". Rispondi in italiano.`;
-  const raw = await askJarvisVision(promptJson, [frameDataUrl]);
+  const raw = await askJarvisVision(promptJson, [frameDataUrl], true);
   const dati = parseJsonLoose(raw);
 
   if (!dati || !Array.isArray(dati.componenti)) {
@@ -600,7 +617,7 @@ async function processComparison(secondImage) {
 
   try {
     const promptJson = `Sei Jarvis. Ti mando due immagini di due oggetti diversi. Confrontali e rispondi SOLO con un oggetto JSON valido con chiavi: oggetto_1, oggetto_2, differenze_principali, vantaggi_oggetto_1, vantaggi_oggetto_2, quale_consiglieresti. Rispondi in italiano.`;
-    const raw = await askJarvisVision(promptJson, [compareState.firstImage, secondImage]);
+    const raw = await askJarvisVision(promptJson, [compareState.firstImage, secondImage], true);
     const dati = parseJsonLoose(raw);
 
     if (!dati) {
@@ -741,7 +758,7 @@ async function runContinuousScan() {
   try {
     const frameDataUrl = captureFrameAsDataUrl();
     const promptJson = `Individua fino a 3 oggetti principali visibili nell'immagine. Rispondi SOLO con un oggetto JSON valido con chiave "oggetti": lista di elementi con "nome" e "box" (box = {x, y, larghezza, altezza} in percentuale 0-100 rispetto all'immagine, dove x/y sono l'angolo in alto a sinistra). Rispondi in italiano, sii breve.`;
-    const raw = await askJarvisVision(promptJson, [frameDataUrl]);
+    const raw = await askJarvisVision(promptJson, [frameDataUrl], true);
     const dati = parseJsonLoose(raw);
     if (dati && Array.isArray(dati.oggetti)) {
       renderOverlayBoxes(dati.oggetti);
@@ -783,8 +800,10 @@ function setResponseBox(text) {
 
 // promptTesto: istruzione testuale per Jarvis
 // immagini: array di data URL (una per la maggior parte dei comandi, due per il confronto)
-async function askJarvisVision(promptTesto, immagini) {
-  const contenuto = [{ type: "text", text: promptTesto }];
+// jsonMode: se true, chiede a Groq di rispondere in JSON valido (usa response_format)
+async function askJarvisVision(promptTesto, immagini, jsonMode) {
+  const istruzioneLingua = "IMPORTANTE: rispondi ESCLUSIVAMENTE in lingua italiana, mai in inglese, senza premesse o ragionamenti visibili prima della risposta. ";
+  const contenuto = [{ type: "text", text: istruzioneLingua + promptTesto }];
   immagini.forEach((img) => {
     contenuto.push({ type: "image_url", image_url: { url: img } });
   });
@@ -792,9 +811,12 @@ async function askJarvisVision(promptTesto, immagini) {
   const payload = {
     model: CONFIG.GROQ_VISION_MODEL,
     messages: [{ role: "user", content: contenuto }],
-    max_tokens: 500,
+    max_completion_tokens: 600,
     temperature: 0.4,
   };
+  if (jsonMode) {
+    payload.response_format = { type: "json_object" };
+  }
 
   const res = await fetch(CONFIG.WORKER_URL, {
     method: "POST",
@@ -802,17 +824,55 @@ async function askJarvisVision(promptTesto, immagini) {
     body: JSON.stringify(payload),
   });
 
-  if (!res.ok) throw new Error("Worker ha risposto con status " + res.status);
+  if (!res.ok) {
+    let dettaglio = "";
+    try {
+      const errBody = await res.json();
+      dettaglio = errBody?.error?.message || errBody?.error || JSON.stringify(errBody);
+    } catch (e) { /* ignora, body non leggibile */ }
+    terminalLog(`Errore Groq (${res.status}): ${dettaglio || "nessun dettaglio"}`);
+    throw new Error("Worker ha risposto con status " + res.status);
+  }
   const data = await res.json();
-  return data?.choices?.[0]?.message?.content?.trim() || "Nessuna risposta disponibile.";
+  let testo = data?.choices?.[0]?.message?.content?.trim() || "Nessuna risposta disponibile.";
+  // Rimuove eventuali blocchi di "ragionamento" che alcuni modelli lasciano nell'output
+  testo = testo.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  return testo;
 }
 
 // ---------- Sintesi vocale ----------
 
-function speak(text) {
+let speechUnlocked = false;
+
+function unlockSpeech() {
+  if (speechUnlocked || !("speechSynthesis" in window)) return;
+  // Su iOS Safari, speechSynthesis.speak() funziona in modo affidabile solo se
+  // la prima chiamata avviene direttamente dentro un gesto dell'utente (tap).
+  // Qui "sblocchiamo" il motore con un'utterance silenziosa, cosi' le chiamate
+  // successive (anche dopo una risposta asincrona di Groq) continuano a funzionare.
+  const unlock = new SpeechSynthesisUtterance(" ");
+  unlock.volume = 0;
+  window.speechSynthesis.speak(unlock);
+  speechUnlocked = true;
+}
+
+let italianVoice = null;
+function pickItalianVoice() {
   if (!("speechSynthesis" in window)) return;
+  const voices = window.speechSynthesis.getVoices();
+  italianVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("it")) || null;
+}
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = pickItalianVoice;
+  pickItalianVoice();
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window) || !text) return;
+  window.speechSynthesis.cancel(); // evita accavallamenti tra risposte
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "it-IT";
+  if (italianVoice) utter.voice = italianVoice;
   utter.rate = 1.02;
   window.speechSynthesis.speak(utter);
 }

@@ -7,7 +7,7 @@ const CONFIG = {
   // "https://jarvis-hud-proxy.tuoaccount.workers.dev"
   WORKER_URL: "https://jarvis-hud-ios.salvatorecaciopppo4000.workers.dev/",
 
-  GROQ_VISION_MODEL: "llama-3.2-11b-vision-preview",
+  GROQ_VISION_MODEL: "qwen/qwen3.6-27b",
   GROQ_TEXT_MODEL: "llama-3.3-70b-versatile",
 
   // Nome citta' di fallback se il GPS non e' disponibile / negato
